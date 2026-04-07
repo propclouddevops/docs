@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Market Insights</title>
+  <link rel="stylesheet" href="https://stackedit.io/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({startOnLoad:true});</script>
+</head>
+
+<body class="stackedit">
+  <div class="stackedit__html">
+
+<h1 id="market-insights">Market Insights — Price Trends Feature</h1>
+
+<h2 id="overview">Overview</h2>
+<p>Market Insights is a data feature that aggregates median property prices from historical and active listing data. It provides price trend analysis across multiple dimensions (location, category, bedroom count) and is displayed in three places:</p>
+<ol>
+<li><strong>Dedicated Market Insights page</strong> (<code>/market-insights</code>) — full interactive experience</li>
+<li><strong>Search results</strong> — price statistics widget at the bottom of results</li>
+<li><strong>Listing detail page</strong> — contextual price trend widget</li>
+</ol>
+<p>All price data is <strong>pre-computed</strong> by monthly scheduled tasks and served from an in-memory cache at runtime.</p>
+<blockquote>
+<p>Currently enabled for the Mauritius portal (PropertyCloud) only.</p>
+</blockquote>
+
+<hr>
+
+<h2 id="architecture">Architecture</h2>
+<div class="mermaid">
+flowchart TB
+    HL[Historical Listings] --> PM[Compute Median Prices]
+    AL[Active Listings] --> PA[Compute Active Medians]
+    AL --> PP[Compute Price per m2]
+    FX[Exchange Rates] --> PM
+    FX --> PA
+
+    PM --> TMP[Historical Medians]
+    PA --> TMA[Active Medians]
+    PP --> TPM[Active Price per m2]
+    GS[Compute Group Sums] --> TGS[Group Sums]
+    SEO[Generate SEO Blurbs] --> TSB[SEO Blurbs]
+
+    TMP --> MC[In-Memory Cache]
+    TMA --> MC
+    TPM --> MC
+    TGS --> MC
+    TSB --> MC
+
+    MC --> MI[Market Insights Page]
+    MC --> SR[Search Results Widget]
+    MC --> DP[Detail Page Widget]
+</div>
+
+<hr>
+
+<h2 id="data-aggregation">Data Aggregation</h2>
+
+<h3 id="what-gets-computed">What Gets Computed</h3>
+<p>The monthly task computes <strong>median prices</strong> across multiple dimension combinations:</p>
+<div class="mermaid">
+flowchart TD
+    O[Overall median by type and year] --- C[By category: Houses, Apartments, Land...]
+    C --- SC[By sub-category: Villas, Townhouses...]
+    SC --- P[By province/region]
+    P --- T[By town]
+    T --- S[By suburb]
+    S --- B[By bedroom count: 1, 2, 3, 4, 5+]
+    B --- X[Cross combinations e.g. Houses in Grand Baie]
+</div>
+
+<h3 id="how-medians-calculated">How Medians Are Calculated</h3>
+<ol>
+<li>All listing prices for a given year are loaded and <strong>normalized to a base currency</strong> using historical exchange rates</li>
+<li><strong>Outlier removal</strong>: Only prices between the 5th and 95th percentiles are included</li>
+<li>The <strong>50th percentile</strong> (true median) is computed from the filtered set</li>
+<li>Results are stored per combination of: year, sale/rental type, category, location, and bedroom count</li>
+</ol>
+
+<h3 id="two-types">Two Types of Median Data</h3>
+<table>
+<thead>
+<tr><th>Type</th><th>Source</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Historical</strong></td><td>All past listings by year</td><td>Powers the year-over-year trend line chart</td></tr>
+<tr><td><strong>Active</strong></td><td>Currently on-market listings</td><td>Powers the "current average price" displays and comparison tables</td></tr>
+</tbody>
+</table>
+<p>Both active medians include a <strong>price per square metre</strong> variant (using building area for properties, land area for land listings).</p>
+
+<hr>
+
+<h2 id="display-locations">Display Locations</h2>
+
+<h3 id="market-insights-page">1. Market Insights Page (<code>/market-insights</code>)</h3>
+<p>The full interactive experience with multiple sections:</p>
+<div class="mermaid">
+flowchart TD
+    F[Filter Controls: Type, Category, Location] --> LC[Line Chart: Historical price trend]
+    F --> BT[Bedroom Table: Median price by bedroom count]
+    F --> CT[Category Table: Median by sub-category]
+    F --> RT[Region Table: Median by province or town]
+</div>
+<ul>
+<li>Users can filter by <strong>sale/rental type</strong>, <strong>category</strong>, and <strong>location</strong> (with autocomplete)</li>
+<li>Changing filters triggers an AJAX call that returns updated chart data and price tables</li>
+<li>Each table section can include AI-generated contextual commentary</li>
+</ul>
+
+<h3 id="search-results-widget">2. Search Results Widget</h3>
+<p>Displayed at the bottom of search results when conditions are met:</p>
+<ul>
+<li>A single location and/or category is selected</li>
+<li>A mandate type (sale/rental) is active</li>
+</ul>
+<div class="mermaid">
+flowchart LR
+    SL[Single location selected] --> W[Price statistics by bedroom or sub-category]
+    SC[Single category selected] --> W
+    MT[Mandate type set] --> W
+    W --> LK[Link to full Market Insights page]
+</div>
+<p>Two display formats (configurable):</p>
+<ul>
+<li><strong>Table format</strong>: Rows with category/size and average price, each linking to filtered search results</li>
+<li><strong>Sentence format</strong>: Natural language cards with an "Explore historical price trends" link</li>
+</ul>
+
+<h3 id="detail-page-widget">3. Listing Detail Page Widget</h3>
+<p>Shows contextual price data for the specific listing being viewed:</p>
+<ul>
+<li><strong>Average price sentence</strong>: "The average price of [category] for [type] in [location] is [price]"</li>
+<li><strong>Historical trend line chart</strong> for that location/category combination</li>
+<li><strong>Price by bedroom table</strong> showing how this listing's bedroom count compares to the local median</li>
+</ul>
+
+<hr>
+
+<h2 id="scheduled-tasks">Scheduled Tasks</h2>
+<table>
+<thead>
+<tr><th>Task</th><th>Frequency</th><th>What It Does</th></tr>
+</thead>
+<tbody>
+<tr><td>Update Market Insights Data</td><td>Monthly (5th at 08:00)</td><td>Full refresh: exchange rates, active medians, active per m², group sums, historical medians (current year), AI SEO blurbs, cache reload</td></tr>
+<tr><td>Re-Populate All Data</td><td>Manual (admin-triggered)</td><td>Full 10-year historical rebuild</td></tr>
+</tbody>
+</table>
+
+<h3 id="monthly-update-sequence">Monthly Update Sequence</h3>
+<div class="mermaid">
+flowchart LR
+    A[Update exchange rates] --> B[Compute active medians]
+    B --> C[Compute active price per m2]
+    C --> D[Compute group sums by views]
+    D --> E[Compute historical medians current year]
+    E --> F[Generate AI SEO blurbs]
+    F --> G[Clear all caches]
+</div>
+
+<hr>
+
+<h2 id="ai-seo-content">AI-Generated SEO Content</h2>
+<p>For each valid combination of culture, type, category, and location, the system:</p>
+<ol>
+<li>Assembles the historical chart data, bedroom medians, sub-category medians, and region medians</li>
+<li>Sends these statistics as a prompt to an AI model</li>
+<li>Receives back contextual market commentary (historical trends, bedroom analysis, category breakdown, location insights)</li>
+<li>Stores the blurbs for display alongside the data tables</li>
+</ol>
+<p>These are regenerated monthly as part of the scheduled update.</p>
+
+<hr>
+
+<h2 id="additional-sections">Additional Sections on Market Insights Page</h2>
+<p>Beyond price trends, the Market Insights page includes:</p>
+<table>
+<thead>
+<tr><th>Section</th><th>Content</th><th>Data Source</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Overview</strong></td><td>Top categories and towns by listing views, median price summary cards</td><td>Pre-computed from view tracking data</td></tr>
+<tr><td><strong>Foreigner</strong></td><td>EDB Mauritius foreign buyer transaction statistics</td><td>Hardcoded historical data</td></tr>
+<tr><td><strong>RPPI</strong></td><td>Stats Mauritius Residential Property Price Index (quarterly)</td><td>Hardcoded historical data</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="configuration">Configuration</h2>
+<p>Key admin settings that control the feature:</p>
+<table>
+<thead>
+<tr><th>Setting</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td>Show Search Result Widget</td><td>Enable/disable the search results price widget</td></tr>
+<tr><td>Price Statistics Table Format</td><td>Switch between table and sentence display format</td></tr>
+<tr><td>Current Year</td><td>Which year is considered "current" for data cutoff</td></tr>
+<tr><td>Number of Years to Show</td><td>How far back the trend line chart goes</td></tr>
+<tr><td>Categories with Bedrooms</td><td>Which categories show bedroom breakdowns</td></tr>
+<tr><td>Excluded Categories/Locations</td><td>Filter out specific categories or locations from insights</td></tr>
+<tr><td>Foreigner Insights Enabled</td><td>Gate the foreign buyer section</td></tr>
+<tr><td>RPPI Insights Enabled</td><td>Gate the RPPI section</td></tr>
+</tbody>
+</table>
+
+  </div>
+</body>
+
+</html>
